@@ -170,6 +170,14 @@ b{font-weight:700}
 
 /* ---------- 加载遮罩 ---------- */
 .loading-overlay{position:fixed;inset:0;background:rgba(245,246,248,.9);z-index:200;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px}
+.login-overlay{position:fixed;inset:0;background:linear-gradient(160deg,var(--y) 0%,var(--y-deep) 100%);z-index:150;display:none;align-items:center;justify-content:center;padding:24px}
+.login-overlay.show{display:flex}
+.login-box{background:#fff;border-radius:22px;padding:30px 24px 26px;width:100%;max-width:340px;box-shadow:0 14px 34px rgba(0,0,0,.2);text-align:center}
+.login-title{font-size:18px;font-weight:800}
+.login-sub{font-size:12.5px;color:var(--muted);margin:4px 0 20px}
+.login-box .field{margin-bottom:10px;text-align:left}
+.login-box .save{margin-top:6px}
+.login-box .hint{min-height:16px}
 .loading-overlay.show{display:flex}
 .spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--y-deep);animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -214,9 +222,8 @@ b{font-weight:700}
 <div class="modal" id="cloudModal"><div class="sheet">
   <div class="sheet-title"><span>连接云端数据库</span><button class="close" onclick="closeModal('cloudModal')">×</button></div>
   <div class="hint">
-    1. 打开 supabase.com 注册并新建一个项目<br>
-    2. 在项目的 SQL Editor 中运行随本应用附带的 <b>supabase_schema.sql</b> 脚本，建好数据表<br>
-    3. 打开项目 Settings → API，复制 <b>Project URL</b> 和 <b>anon public key</b>，粘贴到下面
+    此应用已默认连接教会的云端数据库，一般无需手动设置。<br>
+    仅在需要切换到其他 Supabase 项目时才使用下面的手动连接（连接后仍需用账号登录）。
   </div>
   <div class="row" style="grid-template-columns:1fr">
     <input id="cloudUrlInput" class="field" placeholder="Project URL，例如 https://xxxx.supabase.co">
@@ -228,6 +235,17 @@ b{font-weight:700}
   <div class="hint" id="cloudModalMsg" style="text-align:center"></div>
 </div></div>
 
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <div class="login-title">巴西华人基督教会记账</div>
+    <div class="login-sub">请登录后使用</div>
+    <input id="loginEmail" class="field" type="email" placeholder="邮箱" autocomplete="username">
+    <input id="loginPassword" class="field" type="password" placeholder="密码" autocomplete="current-password" onkeydown="loginKeydown(event)">
+    <button class="save" onclick="doLogin()">登录</button>
+    <div class="hint" id="loginMsg" style="text-align:center"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><div class="msg" id="loadingMsg">正在连接云端数据库…</div></div>
 
@@ -236,14 +254,12 @@ b{font-weight:700}
 /* ============================================================
    基础工具函数
    ============================================================ */
-const CFG_KEY='bccb-cloud-config-v1';
 const DEFAULT_SUPABASE_URL='https://vcbwuibroevdlxqozhai.supabase.co';
 const DEFAULT_SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZjYnd1aWJyb2V2ZGx4cW96aGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4MTU0NTYsImV4cCI6MjEwMTM5MTQ1Nn0.4sYMJnuqtyCZF8cvbCxXYnzHAVIgNhmsV5unVCPDbD0';
 const icons=['🍽','🛍','🧻','🚌','🥕','🍎','🍪','🚲','🎤','📞','👕','✂️','🏠','🛋','👶','👴','💬','✈️','💻','🚗','⚕️','📚','🎓','💵','🎁','💼','🔧','❤️','⛪','⚙️'];
 
-let sb=null, connected=false, loading=true, realtimeChannel=null;
-let cloudCfg=null;
-try{cloudCfg=JSON.parse(localStorage.getItem(CFG_KEY)||'null')}catch{cloudCfg=null}
+let sb=null, connected=false, loading=true, realtimeChannel=null, currentUserEmail='';
+let cloudCfg={url:DEFAULT_SUPABASE_URL,key:DEFAULT_SUPABASE_KEY};
 
 let type='EXPENSE', selectedCat='', editingId=null;
 let viewYear, viewMonth, chartType='EXPENSE', chartRange='month', selectedChartKey='';
@@ -524,6 +540,7 @@ function renderMe(){
   const days=new Set(activeTx().map(t=>t.date)).size,count=activeTx().length;
   document.getElementById('me').innerHTML=`<div class="me-head"><div class="top-row" style="margin-bottom:14px">${syncBadge()}</div><div class="me-name">巴西华人基督教会记账</div><div class="me-stats"><div><b>${days}</b><span>记账总天数</span></div><div><b>${count}</b><span>记账总笔数</span></div></div></div>
   <div class="card"><div class="cloud-status-row ${connected?'on':'off'}"><span class="dot"></span><span class="txt">${connected?'云端数据库已连接':'尚未连接云端数据库'}</span><button class="close" style="font-size:14px;color:var(--blue)" onclick="openModal('cloudModal')">设置</button></div></div>
+  <div class="card"><div class="me-item"><div class="me-left">👤 ${esc(currentUserEmail||'未登录')}</div><span></span></div><div class="me-item" onclick="doLogout()"><div class="me-left" style="color:var(--red)">🚪 退出登录</div><span>›</span></div></div>
   <div class="card"><div class="me-item" onclick="go('home')"><div class="me-left">📒 我的账本</div><span>›</span></div><div class="me-item" onclick="type='INCOME';openCatManage()"><div class="me-left">➕ 收入类别</div><span>›</span></div><div class="me-item" onclick="type='EXPENSE';openCatManage()"><div class="me-left">➖ 支出类别</div><span>›</span></div><div class="me-item" onclick="openAccountManage()"><div class="me-left">💳 账户管理</div><span>›</span></div><div class="me-item" onclick="go('exportPage')"><div class="me-left">⬇️ 导出/备份</div><span>›</span></div></div>`;
 }
 function openAccountManage(){
@@ -612,13 +629,19 @@ async function connectSupabase(url,key,silent){
   document.getElementById('cloudModalMsg').textContent='';
   try{
     sb=window.supabase.createClient(url,key);
-    const {error}=await sb.from('accounts').select('id',{count:'exact',head:true});
+    sb.auth.onAuthStateChange((event)=>{ if(event==='SIGNED_OUT') onSignedOut(); });
+    const {data:{session},error}=await sb.auth.getSession();
     if(error) throw error;
-    cloudCfg={url,key}; localStorage.setItem(CFG_KEY,JSON.stringify(cloudCfg));
-    connected=true; closeModal('cloudModal');
-    if(!silent) toast('已连接云端数据库');
-    await loadAll();
-    subscribeRealtime();
+    cloudCfg={url,key}; closeModal('cloudModal');
+    if(session){
+      currentUserEmail=session.user&&session.user.email||'';
+      connected=true;
+      if(!silent) toast('已连接云端数据库');
+      await loadAll();
+      subscribeRealtime();
+    }else{
+      connected=false; setLoading(false); showLogin();
+    }
   }catch(err){
     console.error(err);
     connected=false; sb=null;
@@ -636,18 +659,45 @@ function submitCloudConfig(){
   connectSupabase(url,key,false);
 }
 
-async function boot(){
-  if(!(cloudCfg && cloudCfg.url && cloudCfg.key) && DEFAULT_SUPABASE_URL && DEFAULT_SUPABASE_KEY){
-    cloudCfg={url:DEFAULT_SUPABASE_URL,key:DEFAULT_SUPABASE_KEY};
-  }
-  if(cloudCfg && cloudCfg.url && cloudCfg.key){
-    document.getElementById('cloudUrlInput').value=cloudCfg.url;
-    document.getElementById('cloudKeyInput').value=cloudCfg.key;
+function showLogin(){document.getElementById('loginOverlay').classList.add('show')}
+function hideLogin(){document.getElementById('loginOverlay').classList.remove('show');document.getElementById('loginMsg').textContent='';document.getElementById('loginPassword').value=''}
+function onSignedOut(){
+  if(realtimeChannel){try{sb.removeChannel(realtimeChannel)}catch{}; realtimeChannel=null}
+  connected=false; currentUserEmail=''; setLoading(false); showLogin(); render();
+}
+async function doLogin(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const pw=document.getElementById('loginPassword').value;
+  const msg=document.getElementById('loginMsg');
+  if(!email||!pw){msg.style.color='var(--red)';msg.textContent='请输入邮箱和密码';return}
+  if(!sb){msg.style.color='var(--red)';msg.textContent='云端连接未就绪，请稍候重试';return}
+  msg.style.color='var(--muted)'; msg.textContent='登录中…';
+  try{
+    const {data,error}=await sb.auth.signInWithPassword({email,password:pw});
+    if(error) throw error;
+    currentUserEmail=data.user&&data.user.email||email;
+    hideLogin();
+    connected=true;
     setLoading(true,'正在连接云端数据库…');
-    await connectSupabase(cloudCfg.url,cloudCfg.key,true);
-  }else{
-    setLoading(false); connected=false; render(); openModal('cloudModal');
+    await loadAll();
+    subscribeRealtime();
+  }catch(err){
+    console.error(err);
+    msg.style.color='var(--red)';
+    msg.textContent='登录失败：'+(err.message==='Invalid login credentials'?'邮箱或密码错误':(err.message||'请重试'));
   }
+}
+function loginKeydown(e){if(e.key==='Enter')doLogin()}
+async function doLogout(){
+  if(!sb) return;
+  setLoading(true,'正在退出登录…');
+  try{await sb.auth.signOut()}catch(err){console.error(err)}
+  setLoading(false);
+}
+
+async function boot(){
+  setLoading(true,'正在连接云端数据库…');
+  await connectSupabase(cloudCfg.url,cloudCfg.key,true);
 }
 render();
 boot();
